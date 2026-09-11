@@ -213,6 +213,11 @@
     .history-toolbar{ flex-direction: column; align-items: stretch; }
     .filter-bar .field{ min-width: 140px; flex: 1 1 140px; }
     .scroll-hint{ display:block; }
+
+    #battery-inventory-table{ min-width: 0; }
+    #battery-inventory-table th:nth-child(5),
+    #battery-inventory-table td:nth-child(5){ display: none; }
+    #battery-inventory-table .btn-xs{ white-space: normal; text-align: center; line-height: 1.3; }
   }
 </style>
 </head>
@@ -245,9 +250,8 @@
     <div class="agv-grid" id="agv-grid"></div>
 
     <h2 class="section-title">คลังแบตเตอรี่ (30 ก้อน)</h2>
-    <p class="scroll-hint">เลื่อนซ้าย-ขวาในตารางเพื่อดูคอลัมน์ "การดำเนินการ"</p>
     <div class="panel">
-      <table>
+      <table id="battery-inventory-table">
         <thead>
           <tr>
             <th>รหัสแบตเตอรี่</th>
