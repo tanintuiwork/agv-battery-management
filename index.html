@@ -908,8 +908,15 @@
     document.getElementById('swap-timestamp-preview').value = new Date().toLocaleString('th-TH');
   }
 
+  let isSubmittingSwap = false;
+
   async function handleSwapSubmit(e){
     e.preventDefault();
+    if(isSubmittingSwap) return;
+    isSubmittingSwap = true;
+    const submitBtn = document.querySelector('#swap-form button[type="submit"]');
+    if(submitBtn) submitBtn.disabled = true;
+
     const agvSelId = document.getElementById('swap-agv').value;
     const newBatteryId = document.getElementById('swap-new-battery').value;
     const operator = document.getElementById('swap-operator').value.trim();
@@ -917,6 +924,8 @@
 
     if(!agvSelId || !newBatteryId || !operator){
       showToast('กรุณากรอกข้อมูลให้ครบถ้วน');
+      isSubmittingSwap = false;
+      if(submitBtn) submitBtn.disabled = false;
       return;
     }
 
@@ -928,6 +937,8 @@
     if(!newBattery || newBattery.status !== 'available'){
       showToast('แบตเตอรี่ที่เลือกไม่พร้อมใช้งานแล้ว กรุณาเลือกใหม่');
       populateSwapBatterySelect(agvSelId);
+      isSubmittingSwap = false;
+      if(submitBtn) submitBtn.disabled = false;
       return;
     }
 
@@ -969,6 +980,8 @@
     showToast(`บันทึกสำเร็จ: ${agvSelId} เปลี่ยนเป็น ${newBatteryId}`);
     saveConfig(); // อัปเดต AGVs/Batteries แบบ background
     appendHistory(historyRecord); // เพิ่มแถวประวัติใหม่ต่อท้าย ไม่เขียนทับของเก่า
+    isSubmittingSwap = false;
+    if(submitBtn) submitBtn.disabled = false;
   }
 
   // ---------- History ----------
