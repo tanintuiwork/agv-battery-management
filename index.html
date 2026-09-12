@@ -544,6 +544,31 @@
   }
 
   // ---------- Google Sheets sync ----------
+  async function fetchWithRetry(url, options, retries, delayMs){
+    retries = retries === undefined ? 2 : retries;
+    delayMs = delayMs === undefined ? 900 : delayMs;
+    let lastErr = null;
+    for(let attempt = 0; attempt <= retries; attempt++){
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      try{
+        const res = await fetch(url, Object.assign({}, options, { signal: controller.signal }));
+        clearTimeout(timeoutId);
+        if(!res.ok){
+          throw new Error('HTTP ' + res.status);
+        }
+        return res;
+      }catch(err){
+        clearTimeout(timeoutId);
+        lastErr = err;
+        if(attempt < retries){
+          await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
+        }
+      }
+    }
+    throw lastErr;
+  }
+
   function setSyncStatus(kind, message){
     const dot = document.getElementById('sync-indicator');
     const text = document.getElementById('sync-text');
@@ -554,7 +579,7 @@
   async function loadState(){
     setSyncStatus('pending', 'กำลังซิงก์ข้อมูลกับ Google Sheets...');
     try{
-      const res = await fetch(APPS_SCRIPT_URL, { method: 'GET' });
+      const res = await fetchWithRetry(APPS_SCRIPT_URL, { method: 'GET' });
       const json = await res.json();
       if(json && json.status === 'ok' && json.data){
         state = normalizeState(json.data);
@@ -573,7 +598,7 @@
 
   async function saveState(){
     try{
-      const res = await fetch(APPS_SCRIPT_URL, {
+      const res = await fetchWithRetry(APPS_SCRIPT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ action: 'saveState', state: state })
