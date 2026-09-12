@@ -77,7 +77,7 @@
   h2.section-title:first-child{ margin-top: 0; }
 
   /* Stat row */
-  .stats{ display:grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 8px; }
+  .stats{ display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 8px; }
   .stat-card{
     background: var(--surface); border:1px solid var(--border); border-radius: var(--radius);
     padding: 14px 16px;
@@ -108,6 +108,7 @@
   .badge.charge{ background: var(--status-charge-bg); color: var(--status-charge-fg); }
   .badge.idle{ background: var(--status-idle-bg); color: var(--status-idle-fg); }
   .badge.maint{ background: var(--status-maint-bg); color: var(--status-maint-fg); }
+  .badge.retired{ background: var(--status-idle-bg); color: var(--status-idle-fg); }
 
   /* Card / table container */
   .panel{
@@ -194,12 +195,51 @@
   .filter-bar .spacer{ flex:1; }
 
   .history-toolbar{ display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap; margin-bottom: 12px; }
+  .toolbar-actions{ display:flex; gap: 8px; }
 
   .storage-note{
     font-size: 12px; color: var(--text-faint); margin-top: 8px;
   }
 
   .scroll-hint{ display:none; font-size: 12px; color: var(--text-faint); margin: -6px 0 8px; }
+
+  /* Admin modal */
+  .modal-overlay{
+    position: fixed; inset: 0; background: rgba(20,20,18,0.5); z-index: 100;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-box{
+    background: var(--surface); border-radius: 12px; padding: 24px; max-width: 380px; width: 100%;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.22);
+  }
+  .modal-box-wide{ max-width: 760px; max-height: 86vh; overflow-y: auto; }
+  .modal-box h3{ margin: 0 0 16px; font-size: 16px; font-weight: 650; }
+  .modal-header{ display:flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .modal-header h3{ margin: 0; }
+  .modal-close{
+    appearance: none; border: none; background: transparent; cursor: pointer;
+    font-size: 18px; color: var(--text-muted); line-height: 1; padding: 4px;
+  }
+  .modal-error{ color: var(--status-maint-fg); font-size: 12.5px; margin: -6px 0 14px; }
+  .modal-actions{ display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+  #admin-pin-input{
+    width: 100%; padding: 12px; border: 1px solid var(--border-strong); border-radius: 8px;
+    font-size: 22px; text-align: center; letter-spacing: 10px; font-family: var(--mono);
+    margin-bottom: 4px;
+  }
+  #admin-pin-input:focus{ outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  .admin-add-form{
+    display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 18px;
+    padding: 14px; background: var(--bg); border-radius: 8px;
+  }
+  .admin-add-form .field{ margin-bottom: 0; min-width: 140px; flex: 1; }
+  #admin-battery-table{ min-width: 520px; }
+  .btn-delete{ border-color: var(--status-maint-fg); color: var(--status-maint-fg); }
+  .btn-delete:hover{ background: var(--status-maint-bg); }
+  .admin-status-select{
+    padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 6px;
+    font-size: 12.5px; font-family: var(--sans); background: #fff; color: var(--text);
+  }
 
   @media (max-width: 720px){
     .stats{ grid-template-columns: repeat(2, 1fr); }
@@ -227,7 +267,7 @@
   <header class="top">
     <div class="brand">
       <h1>ระบบจัดการแบตเตอรี่ AGV</h1>
-      <p>ติดตามสถานะรถ AGV 10 คัน และแบตเตอรี่ 30 ก้อน • ข้อมูลซิงก์แบบเรียลไทม์ผ่าน Google Sheets</p>
+      <p>ติดตามสถานะ AGV และ Battery</p>
     </div>
     <nav class="tabs">
       <button data-view="dashboard" class="active">ภาพรวม</button>
@@ -249,7 +289,7 @@
     <h2 class="section-title">สถานะรถ AGV</h2>
     <div class="agv-grid" id="agv-grid"></div>
 
-    <h2 class="section-title">คลังแบตเตอรี่ (30 ก้อน)</h2>
+    <h2 class="section-title">คลังแบตเตอรี่ (<span id="battery-count-label">30</span> ก้อน)</h2>
     <div class="panel">
       <table id="battery-inventory-table">
         <thead>
@@ -303,6 +343,11 @@
       </div>
 
       <div class="field">
+        <label for="swap-remark">หมายเหตุ (ถ้ามี)</label>
+        <input type="text" id="swap-remark" placeholder="เช่น สาเหตุการเปลี่ยน หรือข้อสังเกตอื่น ๆ" autocomplete="off">
+      </div>
+
+      <div class="field">
         <label>วันที่/เวลา</label>
         <input type="text" id="swap-timestamp-preview" disabled>
       </div>
@@ -335,7 +380,10 @@
         </div>
         <button type="button" class="secondary" id="reset-filters-btn">ล้างตัวกรอง</button>
       </div>
-      <button class="secondary" id="export-btn">⬇ Export to Excel</button>
+      <div class="toolbar-actions">
+        <button type="button" class="secondary" id="manage-battery-btn">🔧 จัดการแบตเตอรี่</button>
+        <button class="secondary" id="export-btn">⬇ Export to Excel</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -349,6 +397,7 @@
             <th>แบตเตอรี่เดิม</th>
             <th>แบตเตอรี่ใหม่</th>
             <th>ผู้ทำรายการ</th>
+            <th>หมายเหตุ</th>
           </tr>
         </thead>
         <tbody id="history-table-body"></tbody>
@@ -356,6 +405,57 @@
     </div>
     <p class="storage-note">แถวพื้นหลังเขียวอ่อน = แบตเตอรี่ที่ยังใช้งานอยู่ในรถขณะนี้ (ยังไม่สิ้นสุดรอบการทำงาน) • ข้อมูลทั้งหมดซิงก์กับ Google Sheets ทุก ๆ ~10 วินาที และเมื่อกดรีเฟรช</p>
   </section>
+</div>
+
+<!-- ADMIN MODAL -->
+<div class="modal-overlay" id="battery-admin-overlay" style="display:none;">
+  <div class="modal-box" id="pin-modal">
+    <h3>ป้อนรหัสผ่านเพื่อจัดการแบตเตอรี่</h3>
+    <input type="password" id="admin-pin-input" maxlength="4" inputmode="numeric" placeholder="••••" autocomplete="off">
+    <p class="modal-error" id="pin-error" style="display:none;">รหัสไม่ถูกต้อง กรุณาลองใหม่</p>
+    <div class="modal-actions">
+      <button type="button" class="secondary" id="pin-cancel-btn">ยกเลิก</button>
+      <button type="button" class="primary" id="pin-confirm-btn">ยืนยัน</button>
+    </div>
+  </div>
+
+  <div class="modal-box modal-box-wide" id="battery-admin-modal" style="display:none;">
+    <div class="modal-header">
+      <h3>จัดการแบตเตอรี่</h3>
+      <button type="button" class="modal-close" id="admin-close-btn">✕</button>
+    </div>
+
+    <div class="admin-add-form">
+      <div class="field">
+        <label for="new-battery-id">รหัสแบตเตอรี่ใหม่</label>
+        <input type="text" id="new-battery-id" placeholder="เช่น BAT-31">
+      </div>
+      <div class="field">
+        <label for="new-battery-status">สถานะเริ่มต้น</label>
+        <select id="new-battery-status">
+          <option value="available">พร้อมใช้งาน</option>
+          <option value="charging">กำลังชาร์จ</option>
+        </select>
+      </div>
+      <button type="button" class="primary" id="add-battery-btn">+ เพิ่มแบตเตอรี่</button>
+    </div>
+
+    <div class="panel">
+      <table id="admin-battery-table">
+        <thead>
+          <tr>
+            <th>รหัสแบตเตอรี่</th>
+            <th>สถานะ</th>
+            <th>ติดตั้งอยู่ที่</th>
+            <th>เปลี่ยนสถานะ</th>
+            <th>ลบ</th>
+          </tr>
+        </thead>
+        <tbody id="admin-battery-table-body"></tbody>
+      </table>
+    </div>
+    <p class="storage-note">แบตเตอรี่ที่กำลังใช้งานอยู่ในรถจะไม่สามารถลบหรือเปลี่ยนสถานะจากที่นี่ได้ ต้องเปลี่ยนแบตออกจากรถก่อน (ผ่านหน้า "เปลี่ยนแบตเตอรี่")</p>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -436,7 +536,8 @@
       agvId: h.agvId,
       oldBatteryId: h.oldBatteryId || null,
       newBatteryId: h.newBatteryId,
-      operator: h.operator
+      operator: h.operator,
+      remark: h.remark || null
     }));
     history.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
     return { agvs, batteries, history };
@@ -500,6 +601,7 @@
       if(status === 'available') return '<span class="badge avail">พร้อมใช้งาน</span>';
       if(status === 'in-use') return '<span class="badge inuse">กำลังใช้งาน</span>';
       if(status === 'charging') return '<span class="badge charge">กำลังชาร์จ</span>';
+      if(status === 'retired') return '<span class="badge retired">หยุดใช้งาน</span>';
     }
     if(kind === 'agv'){
       if(status === 'running') return '<span class="badge inuse">ทำงานอยู่</span>';
@@ -513,13 +615,17 @@
     const avail = state.batteries.filter(b=>b.status==='available').length;
     const inuse = state.batteries.filter(b=>b.status==='in-use').length;
     const charging = state.batteries.filter(b=>b.status==='charging').length;
+    const retired = state.batteries.filter(b=>b.status==='retired').length;
     const el = document.getElementById('stat-cards');
     el.innerHTML = `
       <div class="stat-card"><div class="num">${state.agvs.length}</div><div class="label">รถ AGV ทั้งหมด</div></div>
       <div class="stat-card"><div class="num">${avail}</div><div class="label">แบตเตอรี่พร้อมใช้งาน</div></div>
       <div class="stat-card"><div class="num">${inuse}</div><div class="label">แบตเตอรี่กำลังใช้งาน</div></div>
       <div class="stat-card"><div class="num">${charging}</div><div class="label">แบตเตอรี่กำลังชาร์จ</div></div>
+      <div class="stat-card"><div class="num">${retired}</div><div class="label">แบตเตอรี่หยุดใช้งาน</div></div>
     `;
+    const countLabel = document.getElementById('battery-count-label');
+    if(countLabel) countLabel.textContent = state.batteries.length;
   }
 
   function renderAgvGrid(){
@@ -546,6 +652,7 @@
 
   function batteryActionCell(b){
     if(b.status === 'in-use') return '<span class="muted">ใช้งานอยู่ในรถ</span>';
+    if(b.status === 'retired') return '<span class="muted">หยุดใช้งาน (จัดการผ่านเมนู "จัดการแบตเตอรี่")</span>';
     if(b.status === 'charging') return `<button type="button" class="btn-xs btn-mark-avail" data-toggle-battery="${b.id}">ทำเครื่องหมายว่าพร้อมใช้งาน</button>`;
     if(b.status === 'available') return `<button type="button" class="btn-xs btn-mark-charge" data-toggle-battery="${b.id}">ส่งชาร์จ</button>`;
     return '';
@@ -590,6 +697,127 @@
     populateSwapBatterySelect(swapAgvVal);
     showToast(`อัปเดตสถานะ ${id} เป็น "${battery.status === 'available' ? 'พร้อมใช้งาน' : 'กำลังชาร์จ'}"`);
     saveState(); // ซิงก์ไป Google Sheets แบบ background ไม่บล็อก UI
+  }
+
+  // ---------- Battery admin (PIN-gated add/delete/retire) ----------
+  const ADMIN_PIN = '0000';
+
+  function statusLabel(status){
+    if(status === 'available') return 'พร้อมใช้งาน';
+    if(status === 'charging') return 'กำลังชาร์จ';
+    if(status === 'retired') return 'หยุดใช้งาน';
+    if(status === 'in-use') return 'กำลังใช้งาน';
+    return status;
+  }
+
+  function getNextBatteryId(){
+    const nums = state.batteries.map(b => {
+      const m = String(b.id).match(/(\d+)/);
+      return m ? parseInt(m[1], 10) : 0;
+    });
+    const max = nums.length ? Math.max(...nums) : 0;
+    return 'BAT-' + pad2(max + 1);
+  }
+
+  function openBatteryAdmin(){
+    document.getElementById('battery-admin-overlay').style.display = 'flex';
+    document.getElementById('pin-modal').style.display = 'block';
+    document.getElementById('battery-admin-modal').style.display = 'none';
+    document.getElementById('admin-pin-input').value = '';
+    document.getElementById('pin-error').style.display = 'none';
+    setTimeout(() => document.getElementById('admin-pin-input').focus(), 50);
+  }
+
+  function closeBatteryAdmin(){
+    document.getElementById('battery-admin-overlay').style.display = 'none';
+  }
+
+  function checkAdminPin(){
+    const val = document.getElementById('admin-pin-input').value;
+    if(val === ADMIN_PIN){
+      document.getElementById('pin-modal').style.display = 'none';
+      document.getElementById('battery-admin-modal').style.display = 'block';
+      document.getElementById('new-battery-id').value = getNextBatteryId();
+      renderAdminBatteryList();
+    } else {
+      document.getElementById('pin-error').style.display = 'block';
+      document.getElementById('admin-pin-input').value = '';
+      document.getElementById('admin-pin-input').focus();
+    }
+  }
+
+  function renderAdminBatteryList(){
+    const el = document.getElementById('admin-battery-table-body');
+    if(state.batteries.length === 0){
+      el.innerHTML = `<tr><td colspan="5"><div class="empty-state">ยังไม่มีแบตเตอรี่ในระบบ</div></td></tr>`;
+      return;
+    }
+    el.innerHTML = state.batteries.map(b => {
+      const isInUse = b.status === 'in-use';
+      const statusSelect = isInUse
+        ? '<span class="muted">ใช้งานอยู่ในรถ</span>'
+        : `<select class="admin-status-select" data-battery-id="${b.id}">
+            <option value="available" ${b.status==='available'?'selected':''}>พร้อมใช้งาน</option>
+            <option value="charging" ${b.status==='charging'?'selected':''}>กำลังชาร์จ</option>
+            <option value="retired" ${b.status==='retired'?'selected':''}>หยุดใช้งาน</option>
+          </select>`;
+      const deleteBtn = isInUse
+        ? '<span class="muted">—</span>'
+        : `<button type="button" class="btn-xs btn-delete" data-delete-battery="${b.id}">ลบ</button>`;
+      return `
+        <tr>
+          <td class="mono">${b.id}</td>
+          <td>${statusBadge('battery', b.status)}</td>
+          <td class="${b.agvId ? 'mono' : 'muted'}">${b.agvId || '—'}</td>
+          <td>${statusSelect}</td>
+          <td>${deleteBtn}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function handleAddBattery(){
+    let id = document.getElementById('new-battery-id').value.trim().toUpperCase();
+    const status = document.getElementById('new-battery-status').value;
+    if(!id){
+      id = getNextBatteryId();
+    }
+    if(state.batteries.some(b => b.id === id)){
+      showToast(`มีรหัสแบตเตอรี่ ${id} อยู่ในระบบแล้ว`);
+      return;
+    }
+    state.batteries.push({ id, status, agvId: null, lastUpdated: nowIso(), installedAt: null });
+    renderAll();
+    renderAdminBatteryList();
+    document.getElementById('new-battery-id').value = getNextBatteryId();
+    showToast(`เพิ่มแบตเตอรี่ ${id} เรียบร้อย`);
+    saveState();
+  }
+
+  function handleDeleteBattery(id){
+    const battery = state.batteries.find(b => b.id === id);
+    if(!battery) return;
+    if(battery.status === 'in-use'){
+      showToast('ไม่สามารถลบแบตเตอรี่ที่กำลังใช้งานอยู่ในรถได้ กรุณาเปลี่ยนแบตออกก่อน');
+      return;
+    }
+    if(!window.confirm(`ยืนยันการลบแบตเตอรี่ ${id} ออกจากระบบ? การลบไม่สามารถย้อนกลับได้`)) return;
+    state.batteries = state.batteries.filter(b => b.id !== id);
+    renderAll();
+    renderAdminBatteryList();
+    showToast(`ลบแบตเตอรี่ ${id} แล้ว`);
+    saveState();
+  }
+
+  function handleAdminStatusChange(id, newStatus){
+    const battery = state.batteries.find(b => b.id === id);
+    if(!battery || battery.status === 'in-use') return;
+    battery.status = newStatus;
+    battery.lastUpdated = nowIso();
+    renderAll();
+    renderAdminBatteryList();
+    showToast(`อัปเดตสถานะ ${id} เป็น "${statusLabel(newStatus)}"`);
+    saveState();
   }
 
   // ---------- Swap form ----------
@@ -641,6 +869,7 @@
     const agvSelId = document.getElementById('swap-agv').value;
     const newBatteryId = document.getElementById('swap-new-battery').value;
     const operator = document.getElementById('swap-operator').value.trim();
+    const remark = document.getElementById('swap-remark').value.trim();
 
     if(!agvSelId || !newBatteryId || !operator){
       showToast('กรุณากรอกข้อมูลให้ครบถ้วน');
@@ -684,7 +913,8 @@
       agvId: agvSelId,
       oldBatteryId: oldBatteryId || null,
       newBatteryId: newBatteryId,
-      operator: operator
+      operator: operator,
+      remark: remark || null
     });
 
     renderAll();
@@ -767,7 +997,7 @@
     const past = getFilteredHistory();
     const el = document.getElementById('history-table-body');
     if(ongoing.length === 0 && past.length === 0){
-      el.innerHTML = `<tr><td colspan="7"><div class="empty-state">ยังไม่มีประวัติการเปลี่ยนแบตเตอรี่ตามเงื่อนไขนี้</div></td></tr>`;
+      el.innerHTML = `<tr><td colspan="8"><div class="empty-state">ยังไม่มีประวัติการเปลี่ยนแบตเตอรี่ตามเงื่อนไขนี้</div></td></tr>`;
       return;
     }
     const ongoingHtml = ongoing.map(h => `
@@ -778,6 +1008,7 @@
         <td class="mono">${h.agvId}</td>
         <td class="mono">—</td>
         <td class="mono">${h.newBatteryId}</td>
+        <td class="muted">—</td>
         <td class="muted">—</td>
       </tr>
     `).join('');
@@ -790,6 +1021,7 @@
         <td class="mono">${h.oldBatteryId || '—'}</td>
         <td class="mono">${h.newBatteryId}</td>
         <td>${h.operator}</td>
+        <td class="${h.remark ? '' : 'muted'}">${h.remark || '—'}</td>
       </tr>
     `).join('');
     el.innerHTML = ongoingHtml + pastHtml;
@@ -803,7 +1035,8 @@
       'รถ AGV': h.agvId,
       'แบตเตอรี่เดิม': '-',
       'แบตเตอรี่ใหม่': h.newBatteryId,
-      'ผู้ทำรายการ': '-'
+      'ผู้ทำรายการ': '-',
+      'หมายเหตุ': '-'
     }));
     const pastRows = getFilteredHistory().map(h => ({
       'เวลาเริ่มต้นใช้งาน': h.startTime ? formatDateTime(h.startTime) : '-',
@@ -812,7 +1045,8 @@
       'รถ AGV': h.agvId,
       'แบตเตอรี่เดิม': h.oldBatteryId || '-',
       'แบตเตอรี่ใหม่': h.newBatteryId,
-      'ผู้ทำรายการ': h.operator
+      'ผู้ทำรายการ': h.operator,
+      'หมายเหตุ': h.remark || '-'
     }));
     const rows = [...ongoingRows, ...pastRows];
     if(rows.length === 0){
@@ -820,7 +1054,7 @@
       return;
     }
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [{wch:20},{wch:22},{wch:14},{wch:10},{wch:14},{wch:14},{wch:20}];
+    ws['!cols'] = [{wch:20},{wch:22},{wch:14},{wch:10},{wch:14},{wch:14},{wch:20},{wch:24}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'ประวัติการเปลี่ยนแบต');
     const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
@@ -897,6 +1131,28 @@
       renderHistoryTable();
     });
     document.getElementById('export-btn').addEventListener('click', exportToExcel);
+
+    document.getElementById('manage-battery-btn').addEventListener('click', openBatteryAdmin);
+    document.getElementById('pin-cancel-btn').addEventListener('click', closeBatteryAdmin);
+    document.getElementById('admin-close-btn').addEventListener('click', closeBatteryAdmin);
+    document.getElementById('pin-confirm-btn').addEventListener('click', checkAdminPin);
+    document.getElementById('admin-pin-input').addEventListener('keydown', (e) => {
+      if(e.key === 'Enter') checkAdminPin();
+    });
+    document.getElementById('battery-admin-overlay').addEventListener('click', (e) => {
+      if(e.target.id === 'battery-admin-overlay') closeBatteryAdmin();
+    });
+    document.getElementById('add-battery-btn').addEventListener('click', handleAddBattery);
+    document.getElementById('admin-battery-table-body').addEventListener('change', (e) => {
+      const sel = e.target.closest('select.admin-status-select');
+      if(!sel) return;
+      handleAdminStatusChange(sel.dataset.batteryId, sel.value);
+    });
+    document.getElementById('admin-battery-table-body').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-delete-battery]');
+      if(!btn) return;
+      handleDeleteBattery(btn.dataset.deleteBattery);
+    });
 
     tickTimestampPreview();
     setInterval(tickTimestampPreview, 1000);
