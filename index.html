@@ -404,7 +404,10 @@
         <tbody id="history-table-body"></tbody>
       </table>
     </div>
-    <p class="storage-note">แถวพื้นหลังเขียวอ่อน = แบตเตอรี่ที่ยังใช้งานอยู่ในรถขณะนี้ (ยังไม่สิ้นสุดรอบการทำงาน) • ข้อมูลทั้งหมดซิงก์กับ Google Sheets ทุก ๆ ~10 วินาที และเมื่อกดรีเฟรช</p>
+    <div id="history-show-more" style="display:none; text-align:center; margin-top:14px;">
+      <button type="button" class="secondary" id="history-show-more-btn">แสดงเพิ่มเติม</button>
+    </div>
+    <p class="storage-note">แถวพื้นหลังเขียวอ่อน = แบตเตอรี่ที่ยังใช้งานอยู่ในรถขณะนี้ (ยังไม่สิ้นสุดรอบการทำงาน) • ค่าเริ่มต้นแสดงเฉพาะวันนี้ กด "แสดงเพิ่มเติม" เพื่อดูย้อนหลัง • ข้อมูลทั้งหมดซิงก์กับ Google Sheets ทุก ๆ ~10 วินาที และเมื่อกดรีเฟรช</p>
   </section>
 </div>
 
@@ -468,10 +471,11 @@
 
   const AGV_COUNT = 10;
   const BATTERY_COUNT = 30;
-  const CHARGE_DURATION_MS = 2 * 60 * 60 * 1000; // ชาร์จครบ 2 ชั่วโมง แล้วเปลี่ยนเป็น "พร้อมใช้งาน" อัตโนมัติ
+  const CHARGE_DURATION_MS = 90 * 60 * 1000; // ชาร์จครบ 1 ชั่วโมง 30 นาที แล้วเปลี่ยนเป็น "พร้อมใช้งาน" อัตโนมัติ
   let state = null;
   let currentView = 'dashboard';
   let pollTimer = null;
+  let historyShowAll = false; // ค่าเริ่มต้น: แสดงเฉพาะวันนี้ ต้องกด "แสดงเพิ่มเติม" ถึงจะเห็นย้อนหลัง
 
   const pad2 = n => String(n).padStart(2,'0');
   const agvId = n => 'AGV-' + pad2(n);
@@ -488,6 +492,12 @@
     const ms = new Date(endIso) - new Date(startIso);
     if(isNaN(ms) || ms < 0) return null;
     return ms / (1000 * 60 * 60);
+  }
+  function isToday(dateIso){
+    if(!dateIso) return false;
+    const d = new Date(dateIso);
+    const now = new Date();
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   }
   function formatHours(hours){
     if(hours === null || hours === undefined || isNaN(hours)) return '—';
@@ -759,7 +769,7 @@
     renderAgvGrid();
     renderBatteryTable();
     if(changed){
-      saveConfig(); // มีแบตชาร์จครบ 2 ชม. เปลี่ยนเป็นพร้อมใช้งานแล้ว ซิงก์ไป Google Sheets
+      saveConfig(); // มีแบตชาร์จครบ 1.5 ชม. เปลี่ยนเป็นพร้อมใช้งานแล้ว ซิงก์ไป Google Sheets
     }
   }
 
@@ -1096,36 +1106,54 @@
   function renderHistoryTable(){
     const ongoing = getFilteredOngoing();
     const past = getFilteredHistory();
+
+    const hasExplicitDateFilter = !!(document.getElementById('filter-date-from').value || document.getElementById('filter-date-to').value);
+    const restrictToToday = !historyShowAll && !hasExplicitDateFilter;
+    const pastVisible = restrictToToday ? past.filter(h => isToday(h.endTime || h.timestamp)) : past;
+    const hiddenCount = past.length - pastVisible.length;
+
     const el = document.getElementById('history-table-body');
-    if(ongoing.length === 0 && past.length === 0){
-      el.innerHTML = `<tr><td colspan="8"><div class="empty-state">ยังไม่มีประวัติการเปลี่ยนแบตเตอรี่ตามเงื่อนไขนี้</div></td></tr>`;
-      return;
+    if(ongoing.length === 0 && pastVisible.length === 0){
+      const emptyMsg = hiddenCount > 0
+        ? 'วันนี้ยังไม่มีรายการเปลี่ยนแบตเตอรี่ — กด "แสดงเพิ่มเติม" ด้านล่างเพื่อดูประวัติย้อนหลัง'
+        : 'ยังไม่มีประวัติการเปลี่ยนแบตเตอรี่ตามเงื่อนไขนี้';
+      el.innerHTML = `<tr><td colspan="8"><div class="empty-state">${emptyMsg}</div></td></tr>`;
+    } else {
+      const ongoingHtml = ongoing.map(h => `
+        <tr class="ongoing-row">
+          <td class="muted">${formatDateTime(h.startTime)}</td>
+          <td><span class="badge inuse">กำลังใช้งาน</span></td>
+          <td class="mono">${formatHours(h.workingHours)}</td>
+          <td class="mono">${h.agvId}</td>
+          <td class="mono">—</td>
+          <td class="mono">${h.newBatteryId}</td>
+          <td class="muted">—</td>
+          <td class="muted">—</td>
+        </tr>
+      `).join('');
+      const pastHtml = pastVisible.map(h => `
+        <tr>
+          <td class="muted">${h.startTime ? formatDateTime(h.startTime) : '—'}</td>
+          <td class="muted">${formatDateTime(h.endTime || h.timestamp)}</td>
+          <td class="mono">${formatHours(h.workingHours)}</td>
+          <td class="mono">${h.agvId}</td>
+          <td class="mono">${h.oldBatteryId || '—'}</td>
+          <td class="mono">${h.newBatteryId}</td>
+          <td>${h.operator}</td>
+          <td class="${h.remark ? '' : 'muted'}">${h.remark || '—'}</td>
+        </tr>
+      `).join('');
+      el.innerHTML = ongoingHtml + pastHtml;
     }
-    const ongoingHtml = ongoing.map(h => `
-      <tr class="ongoing-row">
-        <td class="muted">${formatDateTime(h.startTime)}</td>
-        <td><span class="badge inuse">กำลังใช้งาน</span></td>
-        <td class="mono">${formatHours(h.workingHours)}</td>
-        <td class="mono">${h.agvId}</td>
-        <td class="mono">—</td>
-        <td class="mono">${h.newBatteryId}</td>
-        <td class="muted">—</td>
-        <td class="muted">—</td>
-      </tr>
-    `).join('');
-    const pastHtml = past.map(h => `
-      <tr>
-        <td class="muted">${h.startTime ? formatDateTime(h.startTime) : '—'}</td>
-        <td class="muted">${formatDateTime(h.endTime || h.timestamp)}</td>
-        <td class="mono">${formatHours(h.workingHours)}</td>
-        <td class="mono">${h.agvId}</td>
-        <td class="mono">${h.oldBatteryId || '—'}</td>
-        <td class="mono">${h.newBatteryId}</td>
-        <td>${h.operator}</td>
-        <td class="${h.remark ? '' : 'muted'}">${h.remark || '—'}</td>
-      </tr>
-    `).join('');
-    el.innerHTML = ongoingHtml + pastHtml;
+
+    const showMoreEl = document.getElementById('history-show-more');
+    const showMoreBtn = document.getElementById('history-show-more-btn');
+    if(hiddenCount > 0){
+      showMoreEl.style.display = 'block';
+      showMoreBtn.textContent = `แสดงเพิ่มเติม (+${hiddenCount} รายการ)`;
+    } else {
+      showMoreEl.style.display = 'none';
+    }
   }
 
   function exportToExcel(){
@@ -1229,6 +1257,11 @@
       document.getElementById('filter-battery').value = '';
       document.getElementById('filter-date-from').value = '';
       document.getElementById('filter-date-to').value = '';
+      historyShowAll = false;
+      renderHistoryTable();
+    });
+    document.getElementById('history-show-more-btn').addEventListener('click', () => {
+      historyShowAll = true;
       renderHistoryTable();
     });
     document.getElementById('export-btn').addEventListener('click', exportToExcel);
