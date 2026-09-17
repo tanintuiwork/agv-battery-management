@@ -179,6 +179,7 @@
   .btn-mark-avail:hover{ background: var(--status-avail-bg); }
   .btn-mark-charge{ border-color: var(--status-charge-fg); color: var(--status-charge-fg); }
   .btn-mark-charge:hover{ background: var(--status-charge-bg); }
+  .charge-remain{ font-size: 11px; color: var(--text-faint); margin-top: 4px; }
 
   .toast{
     position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
@@ -467,6 +468,7 @@
 
   const AGV_COUNT = 10;
   const BATTERY_COUNT = 30;
+  const CHARGE_DURATION_MS = 2 * 60 * 60 * 1000; // ชาร์จครบ 2 ชั่วโมง แล้วเปลี่ยนเป็น "พร้อมใช้งาน" อัตโนมัติ
   let state = null;
   let currentView = 'dashboard';
   let pollTimer = null;
@@ -504,11 +506,11 @@
     }
     for(let i=1;i<=BATTERY_COUNT;i++){
       if(i<=10){
-        batteries.push({ id: batId(i), status:'in-use', agvId: agvId(i), lastUpdated: nowIso(), installedAt: nowIso() });
+        batteries.push({ id: batId(i), status:'in-use', agvId: agvId(i), lastUpdated: nowIso(), installedAt: nowIso(), chargingStartedAt: null });
       } else if(i<=22){
-        batteries.push({ id: batId(i), status:'available', agvId: null, lastUpdated: nowIso(), installedAt: null });
+        batteries.push({ id: batId(i), status:'available', agvId: null, lastUpdated: nowIso(), installedAt: null, chargingStartedAt: null });
       } else {
-        batteries.push({ id: batId(i), status:'charging', agvId: null, lastUpdated: nowIso(), installedAt: null });
+        batteries.push({ id: batId(i), status:'charging', agvId: null, lastUpdated: nowIso(), installedAt: null, chargingStartedAt: nowIso() });
       }
     }
     return { agvs, batteries, history: [] };
@@ -525,7 +527,8 @@
       status: b.status || 'available',
       agvId: b.agvId || null,
       lastUpdated: b.lastUpdated || null,
-      installedAt: b.installedAt || null
+      installedAt: b.installedAt || null,
+      chargingStartedAt: b.chargingStartedAt || null
     }));
     const history = (data.history || []).map(h => ({
       id: h.id,
@@ -697,7 +700,13 @@
   function batteryActionCell(b){
     if(b.status === 'in-use') return '<span class="muted">ใช้งานอยู่ในรถ</span>';
     if(b.status === 'retired') return '<span class="muted">หยุดใช้งาน (จัดการผ่านเมนู "จัดการแบตเตอรี่")</span>';
-    if(b.status === 'charging') return `<button type="button" class="btn-xs btn-mark-avail" data-toggle-battery="${b.id}">ทำเครื่องหมายว่าพร้อมใช้งาน</button>`;
+    if(b.status === 'charging'){
+      const remainLabel = getChargeRemainingLabel(b);
+      return `<div>
+        <button type="button" class="btn-xs btn-mark-avail" data-toggle-battery="${b.id}">ทำเครื่องหมายว่าพร้อมใช้งาน</button>
+        ${remainLabel ? `<div class="charge-remain">${remainLabel}</div>` : ''}
+      </div>`;
+    }
     if(b.status === 'available') return `<button type="button" class="btn-xs btn-mark-charge" data-toggle-battery="${b.id}">ส่งชาร์จ</button>`;
     return '';
   }
@@ -719,10 +728,39 @@
     }).join('');
   }
 
+  function autoCompleteCharging(){
+    const now = Date.now();
+    let changed = false;
+    state.batteries.forEach(b => {
+      if(b.status === 'charging' && b.chargingStartedAt){
+        const elapsed = now - new Date(b.chargingStartedAt).getTime();
+        if(!isNaN(elapsed) && elapsed >= CHARGE_DURATION_MS){
+          b.status = 'available';
+          b.chargingStartedAt = null;
+          b.lastUpdated = nowIso();
+          changed = true;
+        }
+      }
+    });
+    return changed;
+  }
+
+  function getChargeRemainingLabel(b){
+    if(!b.chargingStartedAt) return null;
+    const elapsedMs = Date.now() - new Date(b.chargingStartedAt).getTime();
+    const remainMs = CHARGE_DURATION_MS - elapsedMs;
+    if(remainMs <= 0) return 'ชาร์จครบแล้ว กำลังอัปเดตสถานะ...';
+    return `เหลือเวลาชาร์จ ~${formatHours(remainMs / (1000 * 60 * 60))}`;
+  }
+
   function renderDashboard(){
+    const changed = autoCompleteCharging();
     renderStats();
     renderAgvGrid();
     renderBatteryTable();
+    if(changed){
+      saveConfig(); // มีแบตชาร์จครบ 2 ชม. เปลี่ยนเป็นพร้อมใช้งานแล้ว ซิงก์ไป Google Sheets
+    }
   }
 
   async function toggleBatteryStatus(id){
@@ -730,8 +768,10 @@
     if(!battery || battery.status === 'in-use') return;
     if(battery.status === 'charging'){
       battery.status = 'available';
+      battery.chargingStartedAt = null;
     } else if(battery.status === 'available'){
       battery.status = 'charging';
+      battery.chargingStartedAt = nowIso();
     } else {
       return;
     }
@@ -830,7 +870,7 @@
       showToast(`มีรหัสแบตเตอรี่ ${id} อยู่ในระบบแล้ว`);
       return;
     }
-    state.batteries.push({ id, status, agvId: null, lastUpdated: nowIso(), installedAt: null });
+    state.batteries.push({ id, status, agvId: null, lastUpdated: nowIso(), installedAt: null, chargingStartedAt: status === 'charging' ? nowIso() : null });
     renderAll();
     renderAdminBatteryList();
     document.getElementById('new-battery-id').value = getNextBatteryId();
@@ -857,6 +897,7 @@
     const battery = state.batteries.find(b => b.id === id);
     if(!battery || battery.status === 'in-use') return;
     battery.status = newStatus;
+    battery.chargingStartedAt = newStatus === 'charging' ? nowIso() : null;
     battery.lastUpdated = nowIso();
     renderAll();
     renderAdminBatteryList();
@@ -949,6 +990,7 @@
       oldBattery.status = 'charging';
       oldBattery.agvId = null;
       oldBattery.installedAt = null;
+      oldBattery.chargingStartedAt = ts;
       oldBattery.lastUpdated = ts;
     }
     newBattery.status = 'in-use';
