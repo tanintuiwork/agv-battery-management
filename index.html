@@ -480,6 +480,7 @@
   const pad2 = n => String(n).padStart(2,'0');
   const agvId = n => 'AGV-' + pad2(n);
   const batId = n => 'BAT-' + pad2(n);
+  const escapeHtml = value => String(value == null ? '' : value).replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
 
   function nowIso(){ return new Date().toISOString(); }
   function formatDateTime(iso){
@@ -589,13 +590,20 @@
     text.textContent = message;
   }
 
-  async function loadState(){
+  async function loadState(view){
+    view = view || 'dashboard';
     setSyncStatus('pending', 'กำลังซิงก์ข้อมูลกับ Google Sheets...');
     try{
-      const res = await fetchWithRetry(APPS_SCRIPT_URL, { method: 'GET' });
+      const res = await fetchWithRetry(APPS_SCRIPT_URL + '?view=' + encodeURIComponent(view), { method: 'GET' });
       const json = await res.json();
       if(json && json.status === 'ok' && json.data){
+        const previousHistory = state && state.history;
         state = normalizeState(json.data);
+        // Lightweight dashboard responses omit history; retain any history already
+        // loaded in this tab instead of clearing it.
+        if(!Object.prototype.hasOwnProperty.call(json.data, 'history')){
+          state.history = previousHistory || [];
+        }
         setSyncStatus('ok', 'เชื่อมต่อ Google Sheets สำเร็จ • ซิงก์ล่าสุด ' + new Date().toLocaleTimeString('th-TH'));
         return;
       }
@@ -647,9 +655,20 @@
     }
   }
 
-  async function refreshFromServer(){
-    await loadState();
+  let refreshInFlight = null;
+  let refreshInFlightView = null;
+  async function refreshFromServer(view){
+    view = view || (currentView === 'history' ? 'history' : 'dashboard');
+    if(refreshInFlight){
+      if(refreshInFlightView === view) return refreshInFlight;
+      await refreshInFlight;
+    }
+    refreshInFlightView = view;
+    refreshInFlight = loadState(view);
+    await refreshInFlight;
     renderAll();
+    refreshInFlight = null;
+    refreshInFlightView = null;
   }
 
   // ---------- Rendering ----------
@@ -697,10 +716,10 @@
       return `
       <div class="agv-card">
         <div class="row1">
-          <span class="agv-id">${agv.id}</span>
+          <span class="agv-id">${escapeHtml(agv.id)}</span>
           ${statusBadge('agv', agv.status)}
         </div>
-        <div class="battery-line">แบตเตอรี่: <span class="bat-id">${agv.batteryId || 'ไม่มี'}</span></div>
+        <div class="battery-line">แบตเตอรี่: <span class="bat-id">${escapeHtml(agv.batteryId || 'ไม่มี')}</span></div>
         ${hoursLine}
       </div>
     `;
@@ -727,9 +746,9 @@
       const hrs = (b.status === 'in-use' && b.installedAt) ? calcWorkingHours(b.installedAt, nowIso()) : null;
       return `
       <tr>
-        <td class="mono">${b.id}</td>
+        <td class="mono">${escapeHtml(b.id)}</td>
         <td>${statusBadge('battery', b.status)}</td>
-        <td class="${b.agvId ? 'mono' : 'muted'}">${b.agvId || '—'}</td>
+        <td class="${b.agvId ? 'mono' : 'muted'}">${escapeHtml(b.agvId || '—')}</td>
         <td class="mono">${formatHours(hrs)}</td>
         <td class="muted">${formatDateTime(b.lastUpdated)}</td>
         <td>${batteryActionCell(b)}</td>
@@ -860,9 +879,9 @@
         : `<button type="button" class="btn-xs btn-delete" data-delete-battery="${b.id}">ลบ</button>`;
       return `
         <tr>
-          <td class="mono">${b.id}</td>
+          <td class="mono">${escapeHtml(b.id)}</td>
           <td>${statusBadge('battery', b.status)}</td>
-          <td class="${b.agvId ? 'mono' : 'muted'}">${b.agvId || '—'}</td>
+          <td class="${b.agvId ? 'mono' : 'muted'}">${escapeHtml(b.agvId || '—')}</td>
           <td>${statusSelect}</td>
           <td>${deleteBtn}</td>
         </tr>
@@ -1124,7 +1143,7 @@
           <td class="muted">${formatDateTime(h.startTime)}</td>
           <td><span class="badge inuse">กำลังใช้งาน</span></td>
           <td class="mono">${formatHours(h.workingHours)}</td>
-          <td class="mono">${h.agvId}</td>
+          <td class="mono">${escapeHtml(h.agvId)}</td>
           <td class="mono">—</td>
           <td class="mono">${h.newBatteryId}</td>
           <td class="muted">—</td>
@@ -1136,11 +1155,11 @@
           <td class="muted">${h.startTime ? formatDateTime(h.startTime) : '—'}</td>
           <td class="muted">${formatDateTime(h.endTime || h.timestamp)}</td>
           <td class="mono">${formatHours(h.workingHours)}</td>
-          <td class="mono">${h.agvId}</td>
+          <td class="mono">${escapeHtml(h.agvId)}</td>
           <td class="mono">${h.oldBatteryId || '—'}</td>
           <td class="mono">${h.newBatteryId}</td>
-          <td>${h.operator}</td>
-          <td class="${h.remark ? '' : 'muted'}">${h.remark || '—'}</td>
+          <td>${escapeHtml(h.operator)}</td>
+          <td class="${h.remark ? '' : 'muted'}">${escapeHtml(h.remark || '—')}</td>
         </tr>
       `).join('');
       el.innerHTML = ongoingHtml + pastHtml;
@@ -1206,7 +1225,7 @@
     currentView = view;
     document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
     document.querySelectorAll('section.view').forEach(s => s.classList.toggle('active', s.id === 'view-' + view));
-    refreshFromServer();
+    refreshFromServer(view === 'history' ? 'history' : 'dashboard');
   }
 
   function renderAll(){
@@ -1218,8 +1237,10 @@
 
   function startPolling(){
     pollTimer = setInterval(() => {
-      if(currentView !== 'swap'){
-        refreshFromServer();
+      // Avoid repeatedly downloading the full history. It is loaded on entry to
+      // History and refreshed manually there; dashboard polling stays lightweight.
+      if(currentView === 'dashboard'){
+        refreshFromServer('dashboard');
       }
     }, 10000);
   }
